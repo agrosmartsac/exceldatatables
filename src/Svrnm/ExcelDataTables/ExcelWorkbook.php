@@ -71,6 +71,9 @@ class ExcelWorkbook implements \Countable
 	 */
 	protected $sheetName = 'Data';
 
+	protected $preserveAllRows = false;
+	protected $preserveRows = array();
+
 	/**
 	 * Instantiate a new object of the type ExcelWorkbook. Expects a filename which
 	 * contains a spreadsheet of type xlsx.
@@ -365,6 +368,26 @@ class ExcelWorkbook implements \Countable
 			$document = new \DOMDocument();
 			$document->loadXML($old);
 			$oldSheetData = $document->getElementsByTagName('sheetData')->item(0);
+
+			if (!empty($this->preserveRows)) {
+				$xpathOld = new \DOMXPath($document);
+				foreach ($this->preserveRows as $rowNumber) {
+					$oldNodes = $xpathOld->query('.//*[@r="' . $rowNumber . '"]', $oldSheetData);
+					if ($oldNodes->length > 0) {
+						$domElementXml = $document->saveXML($oldNodes->item(0));
+						$worksheet->setPreserveRow($rowNumber, $domElementXml);
+					}
+				}
+			}
+
+			if ($this->preserveAllRows) {
+				$pos = strpos($old, '<sheetData>') + 11;
+				$len = strpos($old, '</sheetData>') - $pos;
+				$oldXml = substr($old, $pos, $len);
+				;
+				$worksheet->setOldXml($oldXml);
+			}
+
 			$worksheet->setDateTimeFormatId($this->dateTimeFormatId());
 			$newSheetData = $document->importNode($worksheet->getDocument()->getElementsByTagName('sheetData')->item(0), true);
 			$oldSheetData->parentNode->replaceChild($newSheetData, $oldSheetData);
@@ -375,6 +398,53 @@ class ExcelWorkbook implements \Countable
 			$this->save();
 		}
 		return $this;
+	}
+
+	public function getSheetData($id = null, $name = null)
+	{
+		$name = !is_null($name) ? $name : $this->sheetName;
+		if ($id === null)
+			$id = $this->getSheetIdByName($name);
+
+		if (is_null($id) || $id <= 0) {
+			throw new \Exception('Sheet with name "' . $name . '" not found in file ' . $this->targetFilename . '. Appending is not yet implemented.');
+			/*
+						// find a unused id in the worksheets
+						$id = 1;
+						while($this->getXLSX()->statName('xl/worksheets/sheet'.($id++).'.xml') !== false) {}
+						*/
+		}
+
+		$old = $this->getXLSX()->getFromName('xl/worksheets/sheet' . $id . '.xml');
+		if ($old === false) {
+			throw new \Exception('Sheet not found: SheetId:' . $id . ', SourceFile:' . $this->srcFilename . ', TargetFile:' . $this->targetFilename);
+		} else {
+			$data = array();
+
+			$document = new \DOMDocument();
+			$document->loadXML($old);
+			$oldSheetData = $document->getElementsByTagName('sheetData')->item(0);
+			foreach ($oldSheetData->childNodes as $row) {
+				$rowAttr = $row->attributes;
+				$rowN = $rowAttr->getNamedItem('r')->nodeValue;
+				if (!isset($data[$rowN])) {
+					$data[$rowN] = array();
+				}
+				foreach ($row->childNodes as $column) {
+					$colAttr = $column->attributes;
+					$colN = trim($colAttr->getNamedItem('r')->nodeValue, $rowN);
+					$colT = $colAttr->getNamedItem('t')->nodeValue ?? "";
+					$colV = $column->childNodes->item(0)->nodeValue ?? "";
+
+					if ($colT == "s") {
+						$data[$rowN][$colN] = array('type' => 'sharedstring', 'value' => $colV);
+					} else {
+						$data[$rowN][$colN] = $colV;
+					}
+				}
+			}
+			return $data;
+		}
 	}
 
 	/**
@@ -547,6 +617,19 @@ class ExcelWorkbook implements \Countable
 			$this->save();
 		}
 		return $this;
+	}
+
+	public function setPreserveRows($preserveRows)
+	{
+		if (!isset($preserveRows) || !is_array($preserveRows)) {
+			$preserveRows = array();
+		}
+		$this->preserveRows = $preserveRows;
+	}
+
+	public function setPreserveAllRows($preserveAllRows)
+	{
+		$this->preserveAllRows = $preserveAllRows;
 	}
 
 }

@@ -53,6 +53,8 @@ class ExcelWorksheet
 	 */
 	protected $sheetData;
 
+	protected $sharedStrings;
+
 	/**
 	 * The formatId used for date and time values. The correct id is specified
 	 * in the styles.xml of a workbook. The default value 1 is a placeholder
@@ -73,13 +75,18 @@ class ExcelWorksheet
 	const COLUMN_TYPE_NUMBER = 1;
 	const COLUMN_TYPE_DATETIME = 2;
 	const COLUMN_TYPE_FORMULA = 3;
+	const COLUMN_TYPE_SHAREDSTRING = 4;
 
 	protected static $columnTypes = array(
 		'string' => 0,
 		'number' => 1,
 		'datetime' => 2,
-		'formula' => 3
+		'formula' => 3,
+		'sharedstring' => 4
 	);
+
+	protected $oldXml = '';
+	protected $preserveRows = array();
 
 	/**
 	 * Setup a default document: XML head, Worksheet element, SheetData element.
@@ -248,44 +255,42 @@ class ExcelWorksheet
 	 * @param mixed $column
 	 * @return \DOMElement
 	 */
-	protected function addColumnToRow($row, $column)
+	protected function addColumnToRow($row, $column, $data)
 	{
 		if (
-			is_array($column)
-			&& isset($column['type'])
-			&& isset($column['value'])
-			&& in_array($column['type'], array('string', 'number', 'datetime', 'formula'))
+			is_array($data)
+			&& isset($data['type'])
+			&& isset($data['value'])
+			&& in_array($data['type'], array('string', 'number', 'datetime', 'formula', 'sharedstring'))
 		) {
-			//$function = 'add'.ucfirst($column['type']).'ColumnToRow';
-			//return $this->$function($row, $column['value']);
-			$this->rows[$row][] = array(self::$columnTypes[$column['type']], $column['value']);
-		} elseif (is_numeric($column)) {
-			$this->rows[$row][] = array(self::COLUMN_TYPE_NUMBER, $column);
-			//return $this->addNumberColumnToRow($row, $column);
-		} elseif ($column instanceof \DateTime) {
-			$this->rows[$row][] = array(self::COLUMN_TYPE_DATETIME, $column);
-			//return $this->addDateTimeColumnToRow($row, $column);
+			$this->rows[$row][$column] = array(self::$columnTypes[$data['type']], $data['value']);
+		} elseif (is_numeric($data)) {
+			$this->rows[$row][$column] = array(self::COLUMN_TYPE_NUMBER, $data);
+		} elseif ($data instanceof \DateTime) {
+			$this->rows[$row][$column] = array(self::COLUMN_TYPE_DATETIME, $data);
 		} else {
-			$this->rows[$row][] = array(self::COLUMN_TYPE_STRING, $column);
+			$this->rows[$row][$column] = array(self::COLUMN_TYPE_STRING, $data);
 		}
-		//return $this->addStringColumnToRow($row, (string)$column);
 	}
 
-	public function toXMLColumn($column)
+	public function toXMLColumn($row, $column, $data)
 	{
-		switch ($column[0]) {
+		switch ($data[0]) {
 			case self::COLUMN_TYPE_NUMBER:
-				return '<c><v>' . $column[1] . '</v></c>';
+				return '<c r="' . $column . $row . '"><v>' . $data[1] . '</v></c>';
 				break;
 			case self::COLUMN_TYPE_DATETIME:
-				return '<c s="' . $this->dateTimeFormatId . '"><v>' . static::convertDate($column[1]) . '</v></c>';
+				return '<c r="' . $column . $row . '" s="' . $this->dateTimeFormatId . '"><v>' . static::convertDate($data[1]) . '</v></c>';
 				break;
 			// case self::COLUMN_TYPE_STRING:
 			case self::COLUMN_TYPE_FORMULA:
-				return '<c><f>' . $column[1] . '</f></c>';
+				return '<c r="' . $column . $row . '"><f>' . $data[1] . '</f></c>';
+				break;
+			case self::COLUMN_TYPE_SHAREDSTRING:
+				return '<c r="' . $column . $row . '" t="s"><v>' . $data[1] . '</v></c>';
 				break;
 			default:
-				return '<c t="inlineStr"><is><t>' . strtr($column[1], array(
+				return '<c r="' . $column . $row . '" t="inlineStr"><is><t>' . strtr($data[1], array(
 					"&" => "&amp;",
 					"<" => "&lt;",
 					">" => "&gt;",
@@ -309,13 +314,20 @@ class ExcelWorksheet
 			$self = $this;
 			$this->rowCounter = 1;
 			$fragment = $this->document->createDocumentFragment();
-			$xml = implode('', array_map(function ($row) use ($self) {
-				return '<row r="' . ($self->incrementRowCounter()) . '">' . implode('', array_map(function ($column) use ($self) {
-					return $self->toXMLColumn($column);
-				}, $row)) . '</row>';
-			}, $this->rows));
+			$xml = $this->oldXml;
+			foreach ($this->rows as $row => $rowData) {
+				if (empty($rowData) && isset($this->preserveRows[$row])) {
+					$xml .= $this->preserveRows[$row];
+				} else {
+					$xml .= '<row r="' . $row . '">';
+					foreach ($rowData as $column => $columnData) {
+						$xml .= $this->toXMLColumn($row, $column, $columnData);
+					}
+					$xml .= '</row>';
+				}
+			}
 			if (!$fragment->appendXML($xml)) {
-				throw new \Exception('Parsing XML failed');
+				throw new \Exception('Parsing XML failed.');
 			}
 			$this->getSheetData()->parentNode->replaceChild(
 				$s = $this->getSheetData()->cloneNode(false),
@@ -339,12 +351,15 @@ class ExcelWorksheet
 	 * @param array $columns
 	 * @return $this
 	 */
-	public function addRow($columns = array())
+	public function addRow($row, $columns = array())
 	{
 		$this->dirty = true;
-		$row = $this->getNewRow();
-		foreach ($columns as $column) {
-			$this->addColumnToRow($row, $column);
+		//$row = $this->getNewRow();
+		if (!isset($this->rows[$row])) {
+			$this->rows[$row] = array();
+		}
+		foreach ($columns as $column => $data) {
+			$this->addColumnToRow($row, $column, $data);
 		}
 		return $this;
 	}
@@ -445,8 +460,24 @@ class ExcelWorksheet
 					}
 				}
 			}
-			$this->addRow($row);
+			$this->addRow($key, $row);
 		}
 		return $this;
 	}
+
+	public function clearPreserveRows()
+	{
+		$this->preserveRows = array();
+	}
+
+	public function setPreserveRow($rowNumber, $xmlElement)
+	{
+		$this->preserveRows[$rowNumber] = $xmlElement;
+	}
+
+	public function setOldXml($oldXml)
+	{
+		$this->oldXml = $oldXml;
+	}
+
 }

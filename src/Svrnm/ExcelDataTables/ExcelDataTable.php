@@ -103,6 +103,9 @@ class ExcelDataTable
 	 */
 	protected $calculatedColumns = null;
 
+	protected $preserveAllRows = false;
+	protected $preserveRows = array();
+
 	/**
 	 * Instantiate a new ExcelDataTable object
 	 *
@@ -121,9 +124,7 @@ class ExcelDataTable
 	 */
 	public function addRows($rows)
 	{
-		foreach ($rows as $row) {
-			$this->addRow($row);
-		}
+		$this->data = $rows;
 		return $this;
 	}
 
@@ -343,14 +344,7 @@ class ExcelDataTable
 	 */
 	public function toArray()
 	{
-		$arr = array();
-		if ($this->areHeadersVisible()) {
-			$arr[] = $this->headerLabels;
-		}
-		foreach ($this->data as $row) {
-			$arr[] = $this->fillRow($row);
-		}
-		return $arr;
+		return $this->data;
 	}
 
 	/**
@@ -422,6 +416,12 @@ class ExcelDataTable
 		return $this;
 	}
 
+	public function getSheetData($srcFilename)
+	{
+		$xlsx = new ExcelWorkbook($srcFilename);
+		return $xlsx->getSheetData($this->sheetId, $this->sheetName);
+	}
+
 	/**
 	 * Attach the data table to an existing xlsx file. The file location is given via the
 	 * first parameter. If a second parameter is given the source file will not be overwritten
@@ -448,6 +448,8 @@ class ExcelDataTable
 			$xlsx->setFilename($targetFilename);
 		}
 		$worksheet->addRows($this->toArray(), $calculatedColumns);
+		$xlsx->setPreserveRows($this->preserveRows);
+		$xlsx->setPreserveAllRows($this->preserveAllRows);
 		$xlsx->addWorksheet($worksheet, $this->sheetId, $this->sheetName);
 		if ($forceAutoCalculation) {
 			$xlsx->enableAutoCalculation();
@@ -504,6 +506,19 @@ class ExcelDataTable
 		$table_name = !is_null($table_name) ? $table_name : $this->sheetName;
 		$this->preserveFormulas = $table_name;
 		return $this;
+	}
+
+	public function setPreserveRows($preserveRows)
+	{
+		if (!isset($preserveRows) || !is_array($preserveRows)) {
+			$preserveRows = array();
+		}
+		$this->preserveRows = $preserveRows;
+	}
+
+	public function setPreserveAllRows($preserveAllRows)
+	{
+		$this->preserveAllRows = $preserveAllRows;
 	}
 
 }
