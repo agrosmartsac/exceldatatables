@@ -71,6 +71,8 @@ class ExcelWorksheet
 
 	protected $rowCounter = 1;
 
+	protected $usedFormats = array();
+
 	const COLUMN_TYPE_STRING = 0;
 	const COLUMN_TYPE_NUMBER = 1;
 	const COLUMN_TYPE_DATETIME = 2;
@@ -108,9 +110,6 @@ class ExcelWorksheet
 	{
 		$this->dirty = true;
 		$this->dateTimeFormatId = $id;
-		/*foreach($this->dateTimeColumns as $column) {
-						$column->setAttribute('s', $id);
-					}*/
 		return $this;
 	}
 
@@ -183,70 +182,9 @@ class ExcelWorksheet
 	 */
 	protected function getNewRow()
 	{
-		/*$sheetData = $this->getSheetData();
-					$row = $this->append('row', array(), $sheetData);
-					$row->setAttribute('r', $this->rowCounter++);
-					return $row;*/
 		$this->rows[] = array();
 		return count($this->rows) - 1;
 	}
-
-	/*
-	 * Set the inner text for $element to $text. Returns the DOMNode
-	 * representing the text.
-	 *
-	 * @return \DOMText
-	 */
-	/*protected function setText($element, $text) {
-				  $textElement = $this->getDocument()->createTextNode($text);
-				  $element->appendChild($textElement);
-				  return $textElement;
-		  }*/
-
-	/*
-	 * Add an inline string column to the given $row.
-	 *
-	 * @param \DOMElement $row
-	 * @param string $column
-	 * @return \DOMElement
-	 */
-	/*protected function addStringColumnToRow($row, $column) {
-				  $c = $this->append('c', array('t' => 'inlineStr'), $row);
-				  $is = $this->append('is', array(), $c);
-				  $t = $this->append('t', array(), $is);
-				  $this->setText($t, $column);
-				  return $t;
-		  }*/
-
-	/*
-	 * Add an number column to the given $row.
-	 *
-	 * @param \DOMElement $row
-	 * @param int|string $column
-	 * @return \DOMElement
-	 */
-	/*protected function addNumberColumnToRow($row, $column) {
-				  $c = $this->append('c', array(), $row);
-				  $v = $this->append('v', array(), $c);
-				  $this->setText($v, $column);
-				  return $v;
-		  }*/
-
-	/*
-	 * Add a date time dolumn to the given $row. $column is converted to a numerical
-	 * value relativ to the static::$baseDate value
-	 *
-	 * @param \DOMElement $row
-	 * @param \DateTimeInterface $column
-	 * @return \DOMElement
-	 */
-	/*protected function addDateTimeColumnToRow($row, \DateTimeInterface $column) {
-				  $c = $this->append('c', array('s' => $this->dateTimeFormatId), $row);
-				  $this->dateTimeColumns[] = $c;
-				  $v = $this->append('v', array(), $c);
-				  $this->setText($v, static::convertDate($column) );
-				  return $v;
-		  }*/
 
 	/**
 	 * Add a column to a row. The type of the column is deferred by its value
@@ -263,26 +201,36 @@ class ExcelWorksheet
 			&& isset($data['value'])
 			&& in_array($data['type'], array('string', 'number', 'datetime', 'formula', 'sharedstring'))
 		) {
-			$this->rows[$row][$column] = array(self::$columnTypes[$data['type']], $data['value']);
+			if (in_array($data['type'], array('number', 'datetime')) && !empty($data['format'])) {
+				$this->usedFormats[$data['format']] = -1;
+			} else {
+				$data['format'] = "";
+			}
+			$this->rows[$row][$column] = array(self::$columnTypes[$data['type']], $data['value'], ($data['format'] ?? ""));
 		} elseif (is_numeric($data)) {
-			$this->rows[$row][$column] = array(self::COLUMN_TYPE_NUMBER, $data);
+			$this->rows[$row][$column] = array(self::COLUMN_TYPE_NUMBER, $data, "");
 		} elseif ($data instanceof \DateTime) {
-			$this->rows[$row][$column] = array(self::COLUMN_TYPE_DATETIME, $data);
+			$this->usedFormats[ExcelNumberFormat::FORMAT_DATE_DEFAULT] = -1;
+			$this->rows[$row][$column] = array(self::COLUMN_TYPE_DATETIME, $data, ExcelNumberFormat::FORMAT_DATE_DEFAULT);
 		} else {
-			$this->rows[$row][$column] = array(self::COLUMN_TYPE_STRING, $data);
+			$this->rows[$row][$column] = array(self::COLUMN_TYPE_STRING, $data, "");
 		}
 	}
 
 	public function toXMLColumn($row, $column, $data)
 	{
+		$formatId = (!empty($data[2]) ? ($this->usedFormats[$data[2]] ?? -1) : -1);
 		switch ($data[0]) {
 			case self::COLUMN_TYPE_NUMBER:
-				return '<c r="' . $column . $row . '"><v>' . $data[1] . '</v></c>';
+				if ($formatId == -1) {
+					return '<c r="' . $column . $row . '"><v>' . $data[1] . '</v></c>';
+				} else {
+					return '<c r="' . $column . $row . '" s="' . $formatId . '"><v>' . $data[1] . '</v></c>';
+				}
 				break;
 			case self::COLUMN_TYPE_DATETIME:
-				return '<c r="' . $column . $row . '" s="' . $this->dateTimeFormatId . '"><v>' . static::convertDate($data[1]) . '</v></c>';
+				return '<c r="' . $column . $row . '" s="' . $formatId . '"><v>' . static::convertDate($data[1]) . '</v></c>';
 				break;
-			// case self::COLUMN_TYPE_STRING:
 			case self::COLUMN_TYPE_FORMULA:
 				return '<c r="' . $column . $row . '"><f>' . $data[1] . '</f></c>';
 				break;
@@ -290,13 +238,15 @@ class ExcelWorksheet
 				return '<c r="' . $column . $row . '" t="s"><v>' . $data[1] . '</v></c>';
 				break;
 			default:
-				return '<c r="' . $column . $row . '" t="inlineStr"><is><t>' . strtr($data[1], array(
-					"&" => "&amp;",
-					"<" => "&lt;",
-					">" => "&gt;",
-					'"' => "&quot;",
-					"'" => "&apos;",
-				)
+				return '<c r="' . $column . $row . '" t="inlineStr"><is><t>' . strtr(
+					$data[1],
+					array(
+						"&" => "&amp;",
+						"<" => "&lt;",
+						">" => "&gt;",
+						'"' => "&quot;",
+						"'" => "&apos;",
+					)
 				) . '</t></is></c>';
 				break;
 		}
@@ -478,6 +428,16 @@ class ExcelWorksheet
 	public function setOldXml($oldXml)
 	{
 		$this->oldXml = $oldXml;
+	}
+
+	public function setUsedFormats($usedFormats)
+	{
+		$this->usedFormats = $usedFormats;
+	}
+
+	public function getUsedFormats()
+	{
+		return $this->usedFormats;
 	}
 
 }

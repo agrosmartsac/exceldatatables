@@ -257,6 +257,65 @@ class ExcelWorkbook implements \Countable
 		return $name;
 	}
 
+	protected function createNumberFormats($usedFormats)
+	{
+		$usedFormatIds = array();
+		$usedFormatCodes = array_keys($usedFormats);
+		$formats = $this->getStyles()->getElementsByTagName('numFmt');
+		$highestId = 164;
+		for ($id = 0; $id < $formats->length; ++$id) {
+			$format = $formats->item($id);
+			$code = strtolower($format->getAttribute('formatCode'));
+			$currentId = $format->getAttribute('numFmtId');
+			if ($currentId > $highestId) {
+				$highestId = $currentId;
+			}
+			if (in_array($code, $usedFormatCodes)) {
+				$usedFormatIds[$code] = $currentId;
+			}
+		}
+		foreach ($usedFormatCodes as $code) {
+			$numFmtId = $usedFormatIds[$code] ?? -1;
+			if ($numFmtId == -1) {
+				$numFmtId = ++$highestId;
+				$numFmts = $this->getStyles()->getElementsByTagName('numFmts')->item(0);
+
+				if (is_null($numFmts)) {
+					$numFmts = $this->getStyles()->createElement('numFmts');
+					$styleSheet = $this->getStyles()->getElementsByTagName('styleSheet')->item(0);
+					$styleSheet->insertBefore($numFmts, $styleSheet->childNodes->item(0));
+				}
+
+				$numFmt = $this->getStyles()->createElement('numFmt');
+				$numFmt->setAttribute('numFmtId', $numFmtId);
+				$numFmt->setAttribute('formatCode', $code);
+
+				$numFmts->appendChild($numFmt);
+				$numFmts->setAttribute('count', (int) $numFmts->getAttribute('count') + 1);
+			}
+			$cellXfs = $this->getStyles()->getElementsByTagName('cellXfs')->item(0);
+			$xfs = $cellXfs->childNodes;
+			$result = false;
+			for ($i = 0; $i < $xfs->length; $i++) {
+				$xf = $xfs->item($i);
+				if ($xf->getAttribute('numFmtId') == $numFmtId) {
+					$result = $i;
+				}
+			}
+			if ($result === false) {
+				$result = $cellXfs->getAttribute('count');
+				$xf = $this->getStyles()->createElement('xf');
+				$xf->setAttribute('numFmtId', $numFmtId);
+				$xf->setAttribute('applyNumberFormat', 1);
+				$cellXfs->appendChild($xf);
+				$cellXfs->setAttribute('count', $result + 1);
+			}
+			$usedFormats[$code] = $result;
+			$this->saveStyles();
+		}
+		return $usedFormats;
+	}
+
 	/**
 	 * Extract or create a date time format from the styles.xml. Some guessing is used to find
 	 * a matching id. If no interesting format is find, a new format is created
@@ -354,11 +413,6 @@ class ExcelWorkbook implements \Countable
 
 		if (is_null($id) || $id <= 0) {
 			throw new \Exception('Sheet with name "' . $name . '" not found in file ' . $this->targetFilename . '. Appending is not yet implemented.');
-			/*
-						   // find a unused id in the worksheets
-						   $id = 1;
-						   while($this->getXLSX()->statName('xl/worksheets/sheet'.($id++).'.xml') !== false) {}
-						   */
 		}
 
 		$old = $this->getXLSX()->getFromName('xl/worksheets/sheet' . $id . '.xml');
@@ -388,7 +442,8 @@ class ExcelWorkbook implements \Countable
 				$worksheet->setOldXml($oldXml);
 			}
 
-			$worksheet->setDateTimeFormatId($this->dateTimeFormatId());
+			//$worksheet->setDateTimeFormatId($this->dateTimeFormatId());
+			$worksheet->setUsedFormats($this->createNumberFormats($worksheet->getUsedFormats()));
 			$newSheetData = $document->importNode($worksheet->getDocument()->getElementsByTagName('sheetData')->item(0), true);
 			$oldSheetData->parentNode->replaceChild($newSheetData, $oldSheetData);
 			$xml = $document->saveXML();
@@ -408,11 +463,6 @@ class ExcelWorkbook implements \Countable
 
 		if (is_null($id) || $id <= 0) {
 			throw new \Exception('Sheet with name "' . $name . '" not found in file ' . $this->targetFilename . '. Appending is not yet implemented.');
-			/*
-						// find a unused id in the worksheets
-						$id = 1;
-						while($this->getXLSX()->statName('xl/worksheets/sheet'.($id++).'.xml') !== false) {}
-						*/
 		}
 
 		$old = $this->getXLSX()->getFromName('xl/worksheets/sheet' . $id . '.xml');
