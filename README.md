@@ -6,6 +6,32 @@ Replace a worksheet within an Excel workbook (.xlsx) without changing any other 
 
 This program is free software; see LICENSE for more details.
 
+### Generar para ScriptCase
+
+A continuación se darán los pasos para generar el paquete usado para subir como librería externa a Scriptcase para el uso interno de AGROSMART.
+
+1. Crear una carpeta **exceldatatables** y ubicarnos dentro de esta.
+2. Generar un archivo llamado **composer.json** y guardar el siguiente json en él:
+	```json
+	{
+		"repositories": [
+			{
+				"type": "path",
+				"url": "../../Github/exceldatatables"
+			}
+		],
+		"require": {
+			"svrnm/exceldatatables": "dev-master"
+		}
+	}
+	```
+3. Ejecutar el siguiente comando en la consola para generar el archivo ZIP:
+	```sh
+	zip -r exceldatatables.zip *
+	```
+4. En Scriptcase entrar a la librería externa y borrar los archivos actuales.
+5. Subir el zip asegurandonos de marcar la opción "desencriptar al subir".
+
 ### Details ###
 
 The main purpose of this library is adding a "data table" to an existing excel file without modifing any
